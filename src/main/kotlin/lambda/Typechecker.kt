@@ -1,18 +1,16 @@
 package lambda
 
-import io.vavr.collection.HashMap
-import io.vavr.control.Option
-import io.vavr.kotlin.hashMap
-import io.vavr.kotlin.hashSet
 import lambda.syntax.*
 
 typealias TCContext = HashMap<Name, Scheme>
 
 data class Substitution(val subst: HashMap<Int, Type>) {
-    fun get(u: Int): Option<Type> = subst.get(u)
+    fun get(u: Int): Type? = subst[u]
 
     fun compose(that: Substitution): Substitution {
-        return Substitution(that.subst.mapValues(::apply).merge(subst))
+        val res = HashMap(subst)
+        res.putAll(that.subst.mapValues { it -> apply(it.value) })
+        return Substitution(res)
     }
 
     fun apply(type: Type): Type {
@@ -20,7 +18,7 @@ data class Substitution(val subst: HashMap<Int, Type>) {
             is Type.Constructor, Type.ErrorSentinel -> type
             is Type.Var -> type
             is Type.Fun -> Type.Fun(apply(type.arg), apply(type.result))
-            is Type.Unknown -> subst.getOrElse(type.u, type)
+            is Type.Unknown -> subst[type.u] ?: type
         }
     }
 
@@ -28,13 +26,9 @@ data class Substitution(val subst: HashMap<Int, Type>) {
         return Scheme(scheme.vars, apply(scheme.ty))
     }
 
-    fun apply(ctx: TCContext): TCContext {
-        return ctx.mapValues(::apply)
-    }
+    fun apply(ctx: TCContext): TCContext = HashMap(ctx.mapValues { apply(it.value) })
 
-    fun apply(case: Expression.Case): Expression.Case {
-        return case.copy(body = apply(case.body))
-    }
+    fun apply(case: Expression.Case): Expression.Case = case.copy(body = apply(case.body))
 
     fun apply(expr: Expression): Expression {
         return when (expr) {
@@ -63,7 +57,7 @@ data class Substitution(val subst: HashMap<Int, Type>) {
         Expression.Typed(apply(expr.expr), apply(expr.type), expr.sp)
 
     companion object {
-        val empty = Substitution(hashMap())
+        val empty = Substitution(hashMapOf())
     }
 }
 
@@ -98,7 +92,7 @@ private val initialContext: TCContext
     get() {
         val list = Type.Constructor(Name("List"))
 
-        return hashMap(
+        return hashMapOf(
             Name("add") to Scheme(
                 emptyList(),
                 Type.Fun(
@@ -137,6 +131,7 @@ private val initialContext: TCContext
 class Typechecker {
 
     private var fresh: Int = 0
+    private var substitution: Substitution = Substitution.empty
 
     val types: MutableMap<Name, List<DataConstructor>> = mutableMapOf(
         Name("Int") to emptyList(),
@@ -151,18 +146,21 @@ class Typechecker {
     }
 
     fun generalize(type: Type, ctx: TCContext): Scheme {
-        val unknownsInCtx = ctx.values().map(Scheme::unknowns).fold(hashSet<Int>()) { a, b -> b.union(a) }
+        val unknownsInCtx = hashSetOf<Int>()
+        for (scheme in ctx.values) {
+            unknownsInCtx.addAll(scheme.unknowns())
+        }
         val unknownVars = type.unknowns().removeAll(unknownsInCtx)
         val niceVars = ('a'..'z').iterator()
 
-        var subst = hashMap<Int, Type>()
+        var subst = hashMapOf<Int, Type>()
         val quantifier = mutableListOf<TyVar>()
 
         for (free in unknownVars) {
             val v = TyVar(Name(niceVars.nextChar().toString()))
 
             quantifier += v
-            subst = subst.put(free, Type.Var(v))
+            subst[free] = Type.Var(v)
         }
 
         return Scheme(quantifier, Substitution(subst).apply(type))
@@ -197,7 +195,7 @@ class Typechecker {
         return if (type.unknowns().contains(u)) {
             throw TypeError.OccursCheck(u, type)
         } else {
-            Substitution(hashMap(u to type))
+            Substitution(hashMapOf(u to type))
         }
     }
 
@@ -215,7 +213,8 @@ class Typechecker {
             }
             is Expression.Lambda -> {
                 val tyBinder = freshVar()
-                val tmpCtx = ctx.put(expr.binder, Scheme(emptyList(), tyBinder))
+                val tmpCtx = HashMap(ctx)
+                tmpCtx[expr.binder] = Scheme(emptyList(), tyBinder)
                 val (body, s) = withSpannedError(expr.body.span) {
                     this.infer(tmpCtx, expr.body)
                 }
@@ -228,10 +227,10 @@ class Typechecker {
             }
             is Expression.Var -> {
                 val scheme = ctx.get(expr.name)
-                if (scheme.isDefined) {
+                if (scheme != null) {
                     // If we try to look up a value that failed to type check before we immediately bail
-                    if (scheme.get().ty is Type.ErrorSentinel) throw TypeError.Followup()
-                    val t = instantiate(scheme.get())
+                    if (scheme.ty is Type.ErrorSentinel) throw TypeError.Followup()
+                    val t = instantiate(scheme)
                     tyWrap(expr, t) to Substitution.empty
                 } else {
                     throw TypeError.UnknownVar(expr.name, span)
@@ -257,8 +256,9 @@ class Typechecker {
                 val (tyBinder, s1) = infer(ctx, expr.expr)
                 val genBinder = generalize(tyBinder.type, s1.apply(ctx))
 
-                val tmpCtx = s1.apply(ctx.put(expr.binder, genBinder))
-                val (tyBody, s2) = infer(tmpCtx, s1.apply(expr.body))
+                val tmpCtx = HashMap(ctx)
+                tmpCtx.put(expr.binder, genBinder)
+                val (tyBody, s2) = infer(s1.apply(tmpCtx), s1.apply(expr.body))
 
                 val s = s2.compose(s1)
                 s.apply(tyWrap(Expression.Let(expr.binder, tyBinder, tyBody, span), tyBody.type)) to s
@@ -337,18 +337,19 @@ class Typechecker {
             try {
                 val (t, s) = this.infer(ctx, it.expr)
                 val scheme = generalize(s.apply(t.type), ctx)
-                ctx = ctx.put(it.name, scheme)
+                ctx[it.name] = scheme
             } catch (err: TypeError) {
                 errored = true
                 if (err !is TypeError.Followup) {
                     println("error ${if (err.span == Span.DUMMY) "" else err.span.toString()}: ${err.pretty()}")
                 }
-                ctx = ctx.put(it.name, Scheme.fromType(Type.ErrorSentinel))
+                ctx[it.name] = Scheme.fromType(Type.ErrorSentinel)
             }
         }
 
         if (errored) throw Exception("Type errors occurred")
+        initialContext.keys.forEach { ctx.remove(it) }
 
-        return ctx.removeAll(initialContext.keysIterator())
+        return ctx
     }
 }

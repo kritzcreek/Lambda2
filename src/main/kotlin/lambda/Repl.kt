@@ -12,7 +12,7 @@ fun runFile(file: File) {
 
         try {
             println("Typechecking: sf") // TODO pretty for SourceFile
-            Typechecker().inferSourceFile(sf).forEach { println("${it._1.value} : ${it._2.pretty()}") }
+            Typechecker().inferSourceFile(sf).forEach { (expr, type) -> println("${expr.value} : ${type.pretty()}") }
         } catch (e: Exception) {
             e.printStackTrace()
         }
