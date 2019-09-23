@@ -50,6 +50,7 @@ private object Pretty {
         return when (expr) {
             is RTExpression.Literal -> prettyPrintLiteral(expr.lit)
             is RTExpression.Var -> "${expr.name}"
+            is RTExpression.Let -> "(let ${expr.binder} = ${expr.expr.pretty()} in ${expr.body.pretty()})"
             is RTExpression.Lambda -> "(\\${expr.binder}. ${prettyPrintRTExpr(expr.body, 0)})"
             is RTExpression.Closure -> {
                 "(\\${expr.binder.value}. ${prettyPrintRTExpr(expr.body, 0)})"

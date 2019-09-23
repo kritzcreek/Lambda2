@@ -91,6 +91,13 @@ private val initialContext: TCContext
                     Type.Fun(Type.Int, Type.Int)
                 )
             ),
+            Name("mul") to Scheme(
+                emptyList(),
+                Type.Fun(
+                    Type.Int,
+                    Type.Fun(Type.Int, Type.Int)
+                )
+            ),
             Name("sub") to Scheme(
                 emptyList(),
                 Type.Fun(
@@ -140,6 +147,7 @@ class Typechecker {
     }
 
     fun generalize(type: Type, ctx: TCContext): Scheme {
+        val type = zonk(type)
         val unknownsInCtx = hashSetOf<Int>()
         for (scheme in ctx.values) {
             unknownsInCtx.addAll(scheme.unknowns())
@@ -249,14 +257,18 @@ class Typechecker {
                 tyExpr
             }
             is Expression.Let -> {
-                val tyBinder = infer(ctx, expr.expr)
-                val genBinder = generalize(tyBinder.type, ctx)
+                val tyBinder = freshVar()
+                val binderCtx = HashMap(ctx)
+                binderCtx[expr.binder] = Scheme.fromType(tyBinder)
+                val typedBinder = infer(binderCtx, expr.expr)
+                unify(tyBinder, typedBinder.type)
+                val genBinder = generalize(typedBinder.type, ctx)
 
                 val tmpCtx = HashMap(ctx)
                 tmpCtx[expr.binder] = genBinder
                 val tyBody = infer(tmpCtx, expr.body)
 
-                tyWrap(Expression.Let(expr.binder, tyBinder, tyBody, span), tyBody.type)
+                tyWrap(Expression.Let(expr.binder, typedBinder, tyBody, span), tyBody.type)
             }
             is Expression.If -> {
                 val tyCond = infer(ctx, expr.condition)
@@ -279,9 +291,11 @@ class Typechecker {
                 val typedFields = mutableListOf<Expression.Typed>()
 
                 expr.exprs.zip(fields).forEach { (e, f) ->
-                    val t = withSpannedError(e.span) { infer(ctx, e) }
-                    withSpannedError(e.span) { unify(t.type, f) }
-                    typedFields += t
+                    withSpannedError(e.span) {
+                        val t = infer(ctx, e)
+                        unify(t.type, f)
+                        typedFields += t
+                    }
                 }
 
                 tyWrap(

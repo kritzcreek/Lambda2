@@ -1,7 +1,5 @@
 package lambda
 
-import io.vavr.collection.HashMap
-import io.vavr.kotlin.hashMap
 import lambda.syntax.Lit
 import lambda.syntax.Name
 
@@ -12,6 +10,7 @@ sealed class RTExpression {
     data class Var(val name: Name) : RTExpression()
     data class Lambda(val binder: Name, val body: RTExpression) : RTExpression()
     data class Closure(val binder: Name, val body: RTExpression, val context: Context) : RTExpression()
+    data class Let(val binder: Name, val expr: RTExpression, val body: RTExpression) : RTExpression()
     data class App(val func: RTExpression, val arg: RTExpression) : RTExpression()
     data class If(val condition: RTExpression, val thenBranch: RTExpression, val elseBranch: RTExpression) :
         RTExpression()
@@ -43,40 +42,44 @@ fun matchIntLiteral(expr: RTExpression): Int {
 }
 
 fun eval(ctx: Context, expr: RTExpression): RTExpression {
-    // println("Evaling: ${ctx.pretty()} ${expr.pretty()}")
+//    println("Evaling: ${ctx.pretty()} ${expr.pretty()}")
     return when (expr) {
         is RTExpression.Literal -> expr
-        is RTExpression.Var -> {
-            when (expr.name) {
-                Name("#add") -> {
-                    RTExpression.Literal(
-                        Lit.Int(
-                            matchIntLiteral(ctx.get(Name("x")).get())
-                                    + matchIntLiteral(ctx.get(Name("y")).get())
-                        )
-                    )
-                }
-                Name("#sub") -> {
-                    RTExpression.Literal(
-                        Lit.Int(
-                            matchIntLiteral(ctx.get(Name("x")).get())
-                                    - matchIntLiteral(ctx.get(Name("y")).get())
-                        )
-                    )
-                }
-                Name("#eq") -> {
-                    RTExpression.Literal(
-                        Lit.Bool(
-                            matchIntLiteral(ctx.get(Name("x")).get())
-                                    == matchIntLiteral(ctx.get(Name("y")).get())
-                        )
-                    )
-                }
-                else -> {
-                    val res = ctx.get(expr.name)
-                    return res.getOrElseThrow { EvalException("${expr.name} was undefined.") }
-                }
+        is RTExpression.Var -> when (expr.name) {
+            Name("#add") -> RTExpression.Literal(
+                Lit.Int(
+                    matchIntLiteral(ctx[Name("x")]!!)
+                            + matchIntLiteral(ctx[Name("y")]!!)
+                )
+            )
+            Name("#mul") -> RTExpression.Literal(
+                Lit.Int(
+                    matchIntLiteral(ctx[Name("x")]!!)
+                            * matchIntLiteral(ctx[Name("y")]!!)
+                )
+            )
+            Name("#sub") -> RTExpression.Literal(
+                Lit.Int(
+                    matchIntLiteral(ctx[Name("x")]!!)
+                            - matchIntLiteral(ctx[Name("y")]!!)
+                )
+            )
+            Name("#eq") -> RTExpression.Literal(
+                Lit.Bool(
+                    matchIntLiteral(ctx[Name("x")]!!)
+                            == matchIntLiteral(ctx[Name("y")]!!)
+                )
+            )
+            else -> ctx[expr.name] ?: throw EvalException("${expr.name} was undefined.")
+        }
+        is RTExpression.Let -> {
+            val binder = eval(ctx, expr.expr)
+            if (binder is RTExpression.Closure) {
+                binder.context[expr.binder] = binder
             }
+            val tmpCtx = HashMap(ctx)
+            tmpCtx[expr.binder] = binder
+            eval(tmpCtx, expr.body)
         }
         is RTExpression.Lambda -> RTExpression.Closure(expr.binder, expr.body, ctx)
         is RTExpression.Closure -> expr
@@ -84,7 +87,8 @@ fun eval(ctx: Context, expr: RTExpression): RTExpression {
             when (val evaledClosure = eval(ctx, expr.func)) {
                 is RTExpression.Closure -> {
                     val evaledArg = eval(ctx, expr.arg)
-                    val tmpCtx = evaledClosure.context.put(evaledClosure.binder, evaledArg)
+                    val tmpCtx = HashMap(evaledClosure.context)
+                    tmpCtx[evaledClosure.binder] = evaledArg
                     eval(tmpCtx, evaledClosure.body)
                 }
                 else -> throw EvalException("$evaledClosure is not a function.")
@@ -108,8 +112,9 @@ fun eval(ctx: Context, expr: RTExpression): RTExpression {
                 ?: throw EvalException("tried to pattern match on a non-pack value")
             val case = expr.cases.firstOrNull { it.tag == evaledExpr.tag }
                 ?: throw EvalException("failed to match pattern with tag ${evaledExpr.tag}")
-            val tmpCtx = case.binders.zip(evaledExpr.data).fold(ctx) { acc, (n, e) ->
-                acc.put(n, e)
+            val tmpCtx = HashMap(ctx)
+            case.binders.zip(evaledExpr.data).forEach { (n, e) ->
+                tmpCtx[n] = e
             }
 
             eval(tmpCtx, case.body)
@@ -118,12 +123,12 @@ fun eval(ctx: Context, expr: RTExpression): RTExpression {
 }
 
 fun evalExprs(exprs: List<Pair<Name, RTExpression>>): RTExpression {
-    var ctx = initialContext()
+    val ctx = initialContext()
     var result: RTExpression = RTExpression.Var(Name("empty source file"))
 
     exprs.forEach {
         result = eval(ctx, it.second)
-        ctx = ctx.put(it.first, result)
+        ctx[it.first] = result
     }
 
     return result
@@ -142,7 +147,16 @@ private fun initialContext(): Context {
                 Name("y"),
                 RTExpression.Var(Name("#add"))
             ),
-            hashMap()
+            hashMapOf()
+        )
+    val primMul: RTExpression =
+        RTExpression.Closure(
+            Name("x"),
+            RTExpression.Lambda(
+                Name("y"),
+                RTExpression.Var(Name("#mul"))
+            ),
+            hashMapOf()
         )
 
     val primSub: RTExpression =
@@ -152,7 +166,7 @@ private fun initialContext(): Context {
                 Name("y"),
                 RTExpression.Var(Name("#sub"))
             ),
-            hashMap()
+            hashMapOf()
         )
 
     val primEq: RTExpression =
@@ -162,7 +176,7 @@ private fun initialContext(): Context {
                 Name("y"),
                 RTExpression.Var(Name("#eq"))
             ),
-            hashMap()
+            hashMapOf()
         )
 
     // Z = λf· (λx· f (λy· x x y)) (λx· f (λy· x x y))
@@ -191,14 +205,15 @@ private fun initialContext(): Context {
                 innerZ,
                 innerZ
             ),
-            hashMap()
+            hashMapOf()
         )
 
-    return hashMap(
+    return hashMapOf(
         Name("add") to primAdd,
+        Name("mul") to primMul,
         Name("sub") to primSub,
-        Name("eq") to primEq,
-        Name("fix") to z
+        Name("eq") to primEq
+        // Name("fix") to z
     )
 }
 

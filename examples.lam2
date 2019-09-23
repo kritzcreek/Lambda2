@@ -1,6 +1,6 @@
-let const: forall a b. a -> b -> a =
-  \a. \b. a;
-
 let main: Int =
-  let id = \x.x in
-  const (add 1 10) (id true);
+  let fac = \x.
+    if eq x 1
+      then 1
+      else mul x (fac (sub x 1)) in
+  fac 5;

@@ -22,15 +22,8 @@ class Lowering() {
                 lowerExpr(expr.arg)
             )
             is Expression.Typed -> lowerExpr(expr.expr)
-            is Expression.Let -> {
-                // let x = 4 in add x 5
-                // (\x. add x 5) 4
-
-                RTExpression.App(
-                    RTExpression.Lambda(expr.binder, lowerExpr(expr.body)),
-                    lowerExpr(expr.expr)
-                )
-            }
+            is Expression.Let ->
+                RTExpression.Let(expr.binder, lowerExpr(expr.expr), lowerExpr(expr.body))
             is Expression.If -> RTExpression.If(
                 lowerExpr(expr.condition),
                 lowerExpr(expr.thenBranch),
