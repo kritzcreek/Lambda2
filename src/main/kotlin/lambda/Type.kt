@@ -1,7 +1,5 @@
 package lambda
 
-import io.vavr.collection.HashSet
-import io.vavr.kotlin.hashSet
 import lambda.syntax.Name
 
 inline class TyVar(val name: Name) {
@@ -29,36 +27,41 @@ sealed class Type {
 
     fun isError() = this is ErrorSentinel
 
-    fun freeVars(): HashSet<TyVar> {
-        return when (this) {
-            is Constructor, ErrorSentinel -> hashSet()
-            is Var -> hashSet(v)
-            is Fun -> arg.freeVars().union(result.freeVars())
-            is Unknown -> hashSet()
+    fun subst(tyVar: TyVar, type: Type): Type =
+        over {
+            when {
+                it is Var && it.v == tyVar -> type
+                else -> it
+            }
         }
-    }
 
     fun unknowns(): HashSet<Int> {
-        return when (this) {
-            is ErrorSentinel -> hashSet()
-            is Constructor -> tyArgs.fold(hashSet(), { acc, arg -> acc.union(arg.unknowns()) })
-            is Var -> hashSet()
-            is Fun -> arg.unknowns().union(result.unknowns())
-            is Unknown -> hashSet(u)
+        val res = HashSet<Int>()
+        over {
+            if (it is Unknown) res.add(it.u)
+            it
         }
+        return res
     }
 
-    fun subst(tyVar: TyVar, type: Type): Type {
-        return when (this) {
-            is Var -> if (v == tyVar) type else this
-            is Fun -> Fun(arg.subst(tyVar, type), result.subst(tyVar, type), sp)
-            is Constructor -> Type.Constructor(name, tyArgs.map { it.subst(tyVar, type) })
-            ErrorSentinel, is Unknown -> this
+    fun freeVars(): HashSet<TyVar> {
+        val res = HashSet<TyVar>()
+        over {
+            if (it is Var) res.add(it.v)
+            it
         }
+        return res
     }
 
     fun substMany(subst: List<Pair<TyVar, Type>>): Type =
         subst.fold(this) { acc, (v, t) -> acc.subst(v, t) }
+
+    fun over(f: (Type) -> Type): Type =
+        when (this) {
+            is ErrorSentinel, is Var, is Unknown -> f(this)
+            is Constructor -> f(Constructor(name, tyArgs.map { it.over(f) }, sp))
+            is Fun -> f(Fun(arg.over(f), result.over(f), sp))
+        }
 
     companion object {
         fun v(name: String) = Var(TyVar(Name(name)))
@@ -71,7 +74,7 @@ sealed class Type {
 
 data class Scheme(val vars: List<TyVar>, val ty: Type) {
     val span: Span get() = Span(vars.firstOrNull()?.name?.span?.start ?: ty.span.start, ty.span.end)
-    fun freeVars(): HashSet<TyVar> = ty.freeVars().removeAll(vars)
+    fun freeVars(): HashSet<TyVar> = ty.freeVars().apply { removeAll(vars) }
     fun unknowns(): HashSet<Int> = ty.unknowns()
 
     companion object {

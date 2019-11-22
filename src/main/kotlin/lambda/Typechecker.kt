@@ -1,6 +1,5 @@
 package lambda
 
-import io.vavr.kotlin.hashSet
 import lambda.syntax.*
 
 
@@ -15,13 +14,10 @@ data class Substitution(val subst: HashMap<Int, Type>) {
         subst[u] = type
     }
 
-    fun apply(type: Type): Type {
-        return when (type) {
-            is Type.ErrorSentinel -> type
-            is Type.Var -> type
-            is Type.Constructor -> Type.Constructor(type.name, type.tyArgs.map(::apply))
-            is Type.Fun -> Type.Fun(apply(type.arg), apply(type.result))
-            is Type.Unknown -> subst[type.u].fold(type, ::apply)
+    fun apply(type: Type): Type = type.over {
+        when (it) {
+            is Type.Unknown -> subst[it.u].fold(it, ::apply)
+            else -> it
         }
     }
 
@@ -194,8 +190,10 @@ class Typechecker {
     fun generalize(type: Type, ctx: TCContext): Scheme {
         val type = zonk(type)
 
-        val unknownsInCtx = ctx.values.map(Scheme::unknowns).fold(hashSet<Int>()) { a, b -> b.union(a) }
-        val unknownVars = type.unknowns().removeAll(unknownsInCtx)
+        val unknownsInCtx = HashSet<Int>().apply {
+            ctx.values.map { this.addAll(it.unknowns()) }
+        }
+        val unknownVars = type.unknowns().apply { removeAll(unknownsInCtx) }
         val niceVars = ('a'..'z').iterator()
 
         val subst = hashMapOf<Int, Type>()
@@ -313,7 +311,7 @@ class Typechecker {
             }
             is Expression.Typed -> {
                 val tyExpr = infer(ctx, expr.expr)
-                if (!expr.type.freeVars().isEmpty) { // TODO check wellformedness
+                if (expr.type.freeVars().isNotEmpty()) { // TODO check wellformedness
                     throw RuntimeException("not allowed")
                 }
 
