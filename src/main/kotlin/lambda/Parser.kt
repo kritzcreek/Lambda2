@@ -130,15 +130,16 @@ class Parser(tokens: Iterator<Spanned<Token>>) {
             is Token.UpperIdent -> {
                 val name = parseUpperName()
                 var tyArgs = emptyList<Type>()
+                var endPos = name.span.end
 
                 if (iterator.peek().value is Token.LAngle) {
                     iterator.next()
 
                     tyArgs = commaSeparated(::parseType) { it !is Token.RAngle }
-                    expectNext<Token.RAngle>(expectedError("expected closing angle"))
+                    endPos = expectNext<Token.RAngle>(expectedError("expected closing angle")).span.end
                 }
 
-                Type.Constructor(name, tyArgs)
+                Type.Constructor(name, tyArgs, Span(name.span.start, endPos))
             }
             is Token.Ident -> {
                 Type.Var(parseTyVar())

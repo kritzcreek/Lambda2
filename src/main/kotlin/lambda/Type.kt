@@ -12,14 +12,14 @@ sealed class Type {
     val span: Span
         get() = when (this) {
             ErrorSentinel -> Span.DUMMY
-            is Constructor -> name.span
+            is Constructor -> sp
             is Var -> v.name.span
             is Fun -> sp
             is Unknown -> Span.DUMMY
         }
 
     object ErrorSentinel : Type()
-    data class Constructor(val name: Name, val tyArgs: List<Type> = emptyList()) : Type()
+    data class Constructor(val name: Name, val tyArgs: List<Type> = emptyList(), val sp: Span = Span.DUMMY) : Type()
     data class Var(val v: TyVar) : Type()
     data class Unknown(val u: Int) : Type() {
         override fun toString(): String = "u$u"
