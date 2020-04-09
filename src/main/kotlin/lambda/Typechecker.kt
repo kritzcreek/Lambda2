@@ -163,7 +163,7 @@ sealed class TypeError : Exception() {
     data class UnknownDtor(val name: Namespaced) : TypeError()
     data class OccursCheck(val u: Int, val type: Type) : TypeError()
     data class IfCondition(val type: Type, override var span: Span?) : TypeError()
-    class Followup() : TypeError()
+    object Followup : TypeError()
 
     fun pretty(): String = when (this) {
         is Unification ->
@@ -286,7 +286,7 @@ class Typechecker {
                 val scheme = ctx[namespaced] ?: throw TypeError.UnknownVar(namespaced, span)
 
                 // If we try to look up a value that failed to type check before we immediately bail out
-                if (scheme.ty is Type.ErrorSentinel) throw TypeError.Followup()
+                if (scheme.ty is Type.ErrorSentinel) throw TypeError.Followup
                 tyWrap(expr, instantiate(scheme))
             }
             is Expression.App -> {
